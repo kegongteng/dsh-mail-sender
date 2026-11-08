@@ -1,0 +1,50 @@
+{
+  "name": "dsh-mail-sender",
+  "version": "0.1.4",
+  "description": "inbound IMAP mail is delivered to an agent, whose reply is sent back over SMTP.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml"],
+  "keywords": ["dsh-plugin", "deepseek-harness", "mail", "imap", "smtp"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.16"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/schemastery": "^3.19.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "3.19.0",
+    "@types/nodemailer": "^6.4.17",
+    "typescript": "^5.6.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "iconv-lite": "0.6.3"
+    }
+  }
+}

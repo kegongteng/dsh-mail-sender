@@ -40,8 +40,7 @@
     "dsh": ">=0.2.2-rc.2"
   },
   "scripts": {
-    "build": "tsc && esbuild src/client/index.ts --bundle --format=esm --platform=browser --jsx=automatic --external:react --external:react/jsx-runtime --external:react-dom --external:@deepseek-ai/cordis --outfile=lib/client/index.js",
-    "prepare": "npm run build"
+    "build": "tsc && esbuild src/client/index.ts --bundle --format=esm --platform=browser --jsx=automatic --external:react --external:react/jsx-runtime --external:react-dom --external:@deepseek-ai/cordis --outfile=lib/client/index.js"
   },
   "dependencies": {
     "imapflow": "^1.0.171",

@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type {} from '../remote.js'
+import TYPERT_REMOTE from '../remote.js'
 import type {
   ConnectionTestResult,
   MailSnapshot,
@@ -18,13 +18,18 @@ export interface MailGatewayApi {
   status(): Promise<RemoteResult<MailStatus>>
 }
 
+/**
+ * 直接调用已挂载贡献的方法描述符，不经过 `ctx.remote['mail-gateway']`。
+ * 命名空间访问器要求调用方声明 `inject: ['remote.mail-gateway']`，而该服务只在
+ * `$mount` 之后才存在，声明它会形成等待依赖的死锁。
+ */
 export function createApi(ctx: Context): MailGatewayApi {
-  const remote = ctx.remote['mail-gateway']
+  const methods = TYPERT_REMOTE.methods
   return {
-    get: () => remote.get(),
-    saveMailbox: patch => remote.saveMailbox(patch),
-    saveWhitelist: addresses => remote.saveWhitelist(addresses),
-    testConnection: patch => remote.testConnection(patch),
-    status: () => remote.status(),
+    get: () => methods['mail-gateway/get'].invoke(ctx.remote, {}),
+    saveMailbox: patch => methods['mail-gateway/saveMailbox'].invoke(ctx.remote, { patch }),
+    saveWhitelist: addresses => methods['mail-gateway/saveWhitelist'].invoke(ctx.remote, { addresses }),
+    testConnection: patch => methods['mail-gateway/testConnection'].invoke(ctx.remote, { patch }),
+    status: () => methods['mail-gateway/status'].invoke(ctx.remote, {}),
   }
 }

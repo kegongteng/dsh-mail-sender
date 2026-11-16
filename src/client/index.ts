@@ -8,7 +8,7 @@ import { createApi } from './api.js'
 import { MailGatewaySection } from './MailGatewaySection.js'
 
 export const name = 'dsh-mail-sender'
-export const inject = ['slots', 'remote', 'remote.mail-gateway']
+export const inject = ['slots', 'remote']
 
 /** 挂载本插件的 Remote 命名空间，并在设置页注册“邮件网关”分区。 */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {

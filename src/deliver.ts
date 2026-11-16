@@ -20,12 +20,21 @@ export class MailDeliverer {
   private readonly turnBuffers = new Map<string, string[]>()
   /** 每个会话按投递顺序排队，一轮回复对应队首的一封来信。 */
   private readonly pending = new Map<string, MailJob[]>()
+  /** 每个会话已处理的最大事件序号，用于根/Agent 两处订阅的去重。 */
+  private readonly seen = new Map<string, number>()
+  private readonly offRoot: () => void
 
   constructor(
     private readonly ctx: Context,
     private readonly onReply: (job: MailJob, text: string) => Promise<void>,
     private readonly onLog?: (message: string) => void,
-  ) {}
+  ) {
+    // 根上下文与 Agent 上下文同时订阅：不同版本的事件派发可能只覆盖其中一个
+    // 作用域，两处都挂可保证收到；重复事件用 seq 去重。
+    this.offRoot = ctx.on('session/event', (session, event) => {
+      this.handleEvent(session, event)
+    })
+  }
 
   async deliver(job: MailJob): Promise<void> {
     const handle = await this.ensure(job.sessionId)
@@ -41,6 +50,7 @@ export class MailDeliverer {
   }
 
   dispose(): void {
+    this.offRoot()
     for (const handle of this.handles.values()) {
       handle.off()
       void handle.dispose().catch(() => {})
@@ -48,6 +58,7 @@ export class MailDeliverer {
     this.handles.clear()
     this.turnBuffers.clear()
     this.pending.clear()
+    this.seen.clear()
   }
 
   private async ensure(sessionId: string): Promise<DriveHandle> {
@@ -95,6 +106,9 @@ export class MailDeliverer {
   private handleEvent(session: Session, event: SessionEvent): void {
     const sessionId = session.header.id as string
     if (!sessionId.startsWith('mail:') || !this.handles.has(sessionId)) return
+    const lastSeq = this.seen.get(sessionId) ?? 0
+    if (event.seq <= lastSeq) return
+    this.seen.set(sessionId, event.seq)
     if (event.type === 'assistant/message') {
       const text = event.data.message.content
         .filter(block => block.type === 'text')

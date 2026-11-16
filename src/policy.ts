@@ -22,24 +22,6 @@ export function isAllowed(policy: AccessPolicy, address: string): boolean {
   return policy.has(normalizeAddress(address))
 }
 
-function headerText(mail: ParsedMail, name: string): string {
-  const value = mail.headers.get(name)
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.filter(item => typeof item === 'string').join(', ')
-  return ''
-}
-
-/** 拦截自动回复 / 批量邮件，避免邮件环。 */
-export function isAutoReply(mail: ParsedMail): boolean {
-  const autoSubmitted = headerText(mail, 'auto-submitted').toLowerCase()
-  if (autoSubmitted && autoSubmitted !== 'no') return true
-
-  const precedence = headerText(mail, 'precedence').toLowerCase()
-  if (/(^|[\s,;])(bulk|junk|list)([\s,;]|$)/.test(precedence)) return true
-
-  return false
-}
-
 function decodeEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, ' ')
@@ -84,8 +66,8 @@ function referencesOf(mail: ParsedMail): string | undefined {
 }
 
 /**
- * 一次解析完成准入判断与字段提取：发件地址只解析一次，
- * 不在白名单或命中自动流量时返回 null（静默丢弃）。
+ * 一次解析完成准入判断与字段提取：发件地址只解析一次。
+ * 唯一的准入条件是白名单；取不到发件地址时无法建立会话与回信，返回 null。
  */
 export function toJob(policy: AccessPolicy, mail: ParsedMail): MailJob | null {
   const sender = mail.from?.value?.[0]?.address
@@ -93,14 +75,14 @@ export function toJob(policy: AccessPolicy, mail: ParsedMail): MailJob | null {
 
   const from = normalizeAddress(sender)
   if (!isAllowed(policy, from)) return null
-  if (isAutoReply(mail)) return null
 
-  const text = bodyText(mail)
-  if (!text) return null
+  const subject = mail.subject?.trim() || '(无主题)'
+  // 正文为空（纯图片 / 无文本部分）也照常投递，不再静默丢弃。
+  const text = bodyText(mail) || `主题：${subject}`
 
   return {
     from,
-    subject: mail.subject?.trim() || '(无主题)',
+    subject,
     text,
     messageId: mail.messageId,
     references: referencesOf(mail),

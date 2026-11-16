@@ -12,6 +12,9 @@ export declare class MailDeliverer {
     private readonly turnBuffers;
     /** 每个会话按投递顺序排队，一轮回复对应队首的一封来信。 */
     private readonly pending;
+    /** 每个会话已处理的最大事件序号，用于根/Agent 两处订阅的去重。 */
+    private readonly seen;
+    private readonly offRoot;
     constructor(ctx: Context, onReply: (job: MailJob, text: string) => Promise<void>, onLog?: ((message: string) => void) | undefined);
     deliver(job: MailJob): Promise<void>;
     dispose(): void;

@@ -4,13 +4,10 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MailJob } from './types.js'
 
-interface DrivableAgent extends Agent {
-  followup(message: unknown): void
-}
-
 interface DriveHandle {
-  agent: DrivableAgent
-  owned: boolean
+  agent: Agent
+  /** 该 Agent 作用域内的 durable 事件订阅。 */
+  off: () => void
   dispose(): Promise<void>
 }
 
@@ -23,17 +20,12 @@ export class MailDeliverer {
   private readonly turnBuffers = new Map<string, string[]>()
   /** 每个会话按投递顺序排队，一轮回复对应队首的一封来信。 */
   private readonly pending = new Map<string, MailJob[]>()
-  private readonly off: () => void
 
   constructor(
     private readonly ctx: Context,
     private readonly onReply: (job: MailJob, text: string) => Promise<void>,
     private readonly onLog?: (message: string) => void,
-  ) {
-    this.off = ctx.on('session/event', (session, event) => {
-      this.handleEvent(session, event)
-    })
-  }
+  ) {}
 
   async deliver(job: MailJob): Promise<void> {
     const handle = await this.ensure(job.sessionId)
@@ -49,9 +41,9 @@ export class MailDeliverer {
   }
 
   dispose(): void {
-    this.off()
     for (const handle of this.handles.values()) {
-      if (handle.owned) void handle.dispose().catch(() => {})
+      handle.off()
+      void handle.dispose().catch(() => {})
     }
     this.handles.clear()
     this.turnBuffers.clear()
@@ -66,8 +58,8 @@ export class MailDeliverer {
     const live = this.ctx.agents.get(id)
     if (live) {
       const borrowed: DriveHandle = {
-        agent: live as DrivableAgent,
-        owned: false,
+        agent: live,
+        off: this.watch(live),
         dispose: async () => {},
       }
       this.handles.set(sessionId, borrowed)
@@ -82,12 +74,22 @@ export class MailDeliverer {
     }
 
     const owned: DriveHandle = {
-      agent: handle.agent as DrivableAgent,
-      owned: true,
+      agent: handle.agent,
+      off: this.watch(handle.agent),
       dispose: () => handle.dispose(),
     }
     this.handles.set(sessionId, owned)
     return owned
+  }
+
+  /**
+   * 在 Agent 作用域内订阅会话事件。作用域过滤下，只有进入该 Agent 上下文的监听
+   * 才能稳定收到本会话的 durable 事件，因此不能挂在插件根上下文上。
+   */
+  private watch(agent: Agent): () => void {
+    return agent.ctx.on('session/event', (session, event) => {
+      this.handleEvent(session, event)
+    })
   }
 
   private handleEvent(session: Session, event: SessionEvent): void {

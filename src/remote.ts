@@ -32,6 +32,7 @@ const snapshotSchema = () =>
     passwordSet: z.boolean(),
     allowedAddresses: z.array(z.string()),
     status: statusSchema(),
+    logs: z.array(z.string()),
   })
 
 const patchSchema = () =>

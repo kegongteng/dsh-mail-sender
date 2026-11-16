@@ -47,6 +47,8 @@ export interface MailSnapshot {
     readonly passwordSet: boolean;
     readonly allowedAddresses: readonly string[];
     readonly status: MailStatus;
+    /** 最近的运行日志（最新的在最后），用于设置页排查收信/回信问题。 */
+    readonly logs: readonly string[];
 }
 export interface ConnectionTestResult {
     readonly ok: boolean;

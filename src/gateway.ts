@@ -27,6 +27,7 @@ export class MailGateway {
   private allowed: string[]
   private accountKey = ''
   private generation = 0
+  private readonly logs: string[] = []
   private status: MailStatus = {
     phase: 'disabled',
     supportsIdle: false,
@@ -47,9 +48,18 @@ export class MailGateway {
       async (job, text) => {
         if (!this.sender) throw new Error('SMTP 尚未配置')
         await this.sender.send(job, text)
+        this.record(`[mail] 已回信 ${job.from}`)
       },
-      onLog,
+      message => this.record(message),
     )
+  }
+
+  /** 所有运行日志都进内存环形缓冲，设置页可直接查看，同时保留控制台输出。 */
+  private record(message: string): void {
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    this.logs.push(`${time} ${message}`)
+    if (this.logs.length > 200) this.logs.splice(0, this.logs.length - 200)
+    this.onLog(message)
   }
 
   start(): () => Promise<void> {
@@ -90,6 +100,7 @@ export class MailGateway {
       passwordSet: Boolean(this.mailbox.password),
       allowedAddresses: [...this.allowed],
       status: this.status,
+      logs: [...this.logs],
     }
   }
 
@@ -103,9 +114,11 @@ export class MailGateway {
     if (!isMailboxConfigured(this.mailbox)) {
       this.accountKey = ''
       this.status = { phase: 'disabled', supportsIdle: false, pollIntervalMs: POLL_INTERVAL_MS }
-      this.onLog('[mail] 未配置完整邮箱，收信入口保持关闭')
+      this.record('[mail] 未配置完整邮箱，收信入口保持关闭')
       return
     }
+
+    this.record(`[mail] 开始连接 ${this.mailbox.imapHost}:${this.mailbox.imapPort}`)
 
     this.accountKey = mailboxKey(this.mailbox)
     this.sender = new SmtpSender(this.mailbox)
@@ -118,7 +131,7 @@ export class MailGateway {
         onStatus: status => {
           if (generation === this.generation) this.status = status
         },
-        onLog: this.onLog,
+        onLog: message => this.record(message),
       },
     )
     this.receiver.start()
@@ -139,7 +152,7 @@ export class MailGateway {
         try {
           await this.deliverer.deliver(job)
         } catch (error) {
-          this.onLog(`[mail] 投递 ${job.from} 失败: ${errorMessage(error)}`)
+          this.record(`[mail] 投递 ${job.from} 失败: ${errorMessage(error)}`)
         }
       }
     } finally {

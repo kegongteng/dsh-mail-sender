@@ -47,6 +47,7 @@ export class MailDeliverer {
         source: { kind: 'user' },
       }),
     )
+    this.onLog?.(`[mail] ${job.sessionId} 已交给模型，等待回复`)
   }
 
   dispose(): void {
@@ -78,11 +79,14 @@ export class MailDeliverer {
     }
 
     let handle: AgentHandle
+    let created = false
     try {
       handle = await this.ctx.agents.resume({ resumeSessionId: id })
     } catch {
       handle = await this.ctx.agents.create({ sessionId: id })
+      created = true
     }
+    this.onLog?.(`[mail] ${sessionId} 会话已${created ? '创建' : '恢复'}`)
 
     const owned: DriveHandle = {
       agent: handle.agent,
@@ -131,7 +135,11 @@ export class MailDeliverer {
       if (queue && queue.length === 0) this.pending.delete(sessionId)
       if (!job) return
 
-      if (event.data.reason.kind !== 'completed' || !text) return
+      if (event.data.reason.kind !== 'completed' || !text) {
+        this.onLog?.(`[mail] ${sessionId} 本轮未产生可回复文本（${event.data.reason.kind}）`)
+        return
+      }
+      this.onLog?.(`[mail] ${sessionId} 模型已回复，准备回信 ${job.from}`)
       void this.onReply(job, text).catch(error => {
         this.onLog?.(`[mail] 回信失败: ${error instanceof Error ? error.message : String(error)}`)
       })

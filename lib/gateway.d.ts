@@ -16,8 +16,11 @@ export declare class MailGateway {
     private allowed;
     private accountKey;
     private generation;
+    private readonly logs;
     private status;
     constructor(ctx: Context, mailbox: MailboxSettings, allowed: readonly string[], onLog?: (message: string) => void);
+    /** 所有运行日志都进内存环形缓冲，设置页可直接查看，同时保留控制台输出。 */
+    private record;
     start(): () => Promise<void>;
     /** 只接受新的绑定与白名单；ctx 不参与重载。 */
     reload(mailbox: MailboxSettings, allowed: readonly string[]): void;

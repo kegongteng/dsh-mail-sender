@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, KeyboardEvent } from 'react'
 import type { MailGatewayApi } from './api.js'
 import { StatusCard } from './StatusCard.js'
@@ -23,7 +23,7 @@ const table: CSSProperties = {
 
 const cell: CSSProperties = {
   borderBottom: '1px solid var(--dsh-border, #e5e7eb)',
-  padding: '8px 10px',
+  padding: '6px 8px',
   verticalAlign: 'middle',
   textAlign: 'left',
 }
@@ -57,8 +57,23 @@ const primary: CSSProperties = {
 }
 
 const muted: CSSProperties = { color: '#6b7280', fontSize: 12 }
-const section: CSSProperties = { display: 'grid', gap: 16, maxWidth: 760 }
+const section: CSSProperties = { display: 'grid', gap: 16, maxWidth: 640 }
 const row: CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }
+
+const logBox: CSSProperties = {
+  margin: 0,
+  padding: '8px 10px',
+  maxHeight: 220,
+  overflow: 'auto',
+  border: '1px solid var(--dsh-border, #e5e7eb)',
+  borderRadius: 6,
+  background: 'var(--dsh-code-bg, rgba(127,127,127,0.08))',
+  fontSize: 12,
+  lineHeight: 1.6,
+  fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+}
 
 export function MailGatewaySection({ api }: MailGatewaySectionProps) {
   const [snapshot, setSnapshot] = useState<MailSnapshot>()
@@ -69,6 +84,37 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
   const [test, setTest] = useState<ConnectionTestResult>()
   const [busy, setBusy] = useState<Busy>(null)
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string }>()
+  const logRef = useRef<HTMLPreElement>(null)
+
+  // 首次读取填充表单；之后每 3 秒只刷新状态与日志，不覆盖正在编辑的表单。
+  useEffect(() => {
+    let alive = true
+    const load = async (initial: boolean) => {
+      const result = await api.get()
+      if (!alive) return
+      if (!result.ok) {
+        if (initial) setNotice({ kind: 'error', text: result.error.message })
+        return
+      }
+      setSnapshot(result.value)
+      if (initial) {
+        setMailbox({ ...result.value.mailbox })
+        setAllowed([...result.value.allowedAddresses])
+        setPassword('')
+      }
+    }
+    void load(true)
+    const timer = setInterval(() => void load(false), 3000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [api])
+
+  useEffect(() => {
+    const box = logRef.current
+    if (box) box.scrollTop = box.scrollHeight
+  }, [snapshot?.logs])
 
   const applySnapshot = (next: MailSnapshot, resetMailbox: boolean) => {
     setSnapshot(next)
@@ -78,18 +124,6 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
       setPassword('')
     }
   }
-
-  useEffect(() => {
-    let alive = true
-    void api.get().then(result => {
-      if (!alive) return
-      if (result.ok) applySnapshot(result.value, true)
-      else setNotice({ kind: 'error', text: result.error.message })
-    })
-    return () => {
-      alive = false
-    }
-  }, [api])
 
   const setField = <K extends keyof MailboxSettings>(key: K, value: MailboxSettings[K]) => {
     setMailbox(current => (current ? { ...current, [key]: value } : current))
@@ -109,7 +143,7 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
     if (result.ok) {
       applySnapshot(result.value, true)
       setTest(undefined)
-      setNotice({ kind: 'ok', text: '邮箱绑定已保存，连接已按新配置重建。' })
+      setNotice({ kind: 'ok', text: '已保存，按新配置重连。' })
     } else {
       setNotice({ kind: 'error', text: result.error.message })
     }
@@ -152,7 +186,7 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
     setBusy(null)
     if (result.ok) {
       applySnapshot(result.value, false)
-      setNotice({ kind: 'ok', text: '白名单已保存，收信策略立即生效，连接保持不变。' })
+      setNotice({ kind: 'ok', text: '白名单已保存。' })
     } else {
       setNotice({ kind: 'error', text: result.error.message })
     }
@@ -172,6 +206,33 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
     setField(key, event.target.checked)
   }
 
+  const textRow = (label: string, key: 'email' | 'displayName' | 'imapHost' | 'smtpHost' | 'username') => (
+    <tr>
+      <td style={{ ...cell, width: 110 }}>{label}</td>
+      <td style={cell}>
+        <input style={input} value={mailbox?.[key] ?? ''} onChange={textField(key)} />
+      </td>
+    </tr>
+  )
+
+  const portRow = (label: string, key: 'imapPort' | 'smtpPort') => (
+    <tr>
+      <td style={{ ...cell, width: 110 }}>{label}</td>
+      <td style={cell}>
+        <input style={input} value={mailbox?.[key] ?? 0} onChange={numberField(key)} />
+      </td>
+    </tr>
+  )
+
+  const tlsRow = (label: string, key: 'imapSecure' | 'smtpSecure') => (
+    <tr>
+      <td style={{ ...cell, width: 110 }}>{label}</td>
+      <td style={cell}>
+        <input type="checkbox" checked={mailbox?.[key] ?? true} onChange={boolField(key)} />
+      </td>
+    </tr>
+  )
+
   return (
     <div style={section}>
       <StatusCard status={snapshot?.status} allowedCount={allowed.length} test={test} />
@@ -179,79 +240,18 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
       <div>
         <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>邮箱绑定</h3>
         <table style={table}>
-          <thead>
-            <tr>
-              <th style={{ ...cell, ...muted, width: 140 }}>字段</th>
-              <th style={{ ...cell, ...muted }}>值</th>
-              <th style={{ ...cell, ...muted, width: 240 }}>说明</th>
-            </tr>
-          </thead>
           <tbody>
+            {textRow('邮箱地址', 'email')}
+            {textRow('显示名', 'displayName')}
+            {textRow('IMAP 主机', 'imapHost')}
+            {portRow('IMAP 端口', 'imapPort')}
+            {tlsRow('IMAP TLS', 'imapSecure')}
+            {textRow('SMTP 主机', 'smtpHost')}
+            {portRow('SMTP 端口', 'smtpPort')}
+            {tlsRow('SMTP TLS', 'smtpSecure')}
+            {textRow('登录用户名', 'username')}
             <tr>
-              <td style={cell}>邮箱地址</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.email ?? ''} onChange={textField('email')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>接收邮件与回信使用的地址。</td>
-            </tr>
-            <tr>
-              <td style={cell}>显示名</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.displayName ?? ''} onChange={textField('displayName')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>回信时的发件人名称，可留空。</td>
-            </tr>
-            <tr>
-              <td style={cell}>IMAP 主机</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.imapHost ?? ''} onChange={textField('imapHost')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>标准 IMAP 服务器地址。</td>
-            </tr>
-            <tr>
-              <td style={cell}>IMAP 端口</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.imapPort ?? 993} onChange={numberField('imapPort')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>SSL 一般为 993。</td>
-            </tr>
-            <tr>
-              <td style={cell}>IMAP TLS</td>
-              <td style={cell}>
-                <input type="checkbox" checked={mailbox?.imapSecure ?? true} onChange={boolField('imapSecure')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>勾选表示使用 SSL/TLS。</td>
-            </tr>
-            <tr>
-              <td style={cell}>SMTP 主机</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.smtpHost ?? ''} onChange={textField('smtpHost')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>标准 SMTP 服务器地址。</td>
-            </tr>
-            <tr>
-              <td style={cell}>SMTP 端口</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.smtpPort ?? 465} onChange={numberField('smtpPort')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>SSL 一般为 465。</td>
-            </tr>
-            <tr>
-              <td style={cell}>SMTP TLS</td>
-              <td style={cell}>
-                <input type="checkbox" checked={mailbox?.smtpSecure ?? true} onChange={boolField('smtpSecure')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>勾选表示使用 SSL/TLS。</td>
-            </tr>
-            <tr>
-              <td style={cell}>登录用户名</td>
-              <td style={cell}>
-                <input style={input} value={mailbox?.username ?? ''} onChange={textField('username')} />
-              </td>
-              <td style={{ ...cell, ...muted }}>留空时使用邮箱地址。</td>
-            </tr>
-            <tr>
-              <td style={cell}>密码</td>
+              <td style={{ ...cell, width: 110 }}>密码</td>
               <td style={cell}>
                 <input
                   style={input}
@@ -261,7 +261,6 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
                   onChange={event => setPassword(event.target.value)}
                 />
               </td>
-              <td style={{ ...cell, ...muted }}>保存后只显示“已设置”，不会回显明文。</td>
             </tr>
           </tbody>
         </table>
@@ -272,7 +271,6 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
           <button style={button} disabled={busy !== null} onClick={() => void testConnection()}>
             {busy === 'test' ? '测试中…' : '测试连接'}
           </button>
-          <span style={muted}>保存邮箱绑定时会按新配置重建连接。</span>
         </div>
       </div>
 
@@ -314,8 +312,14 @@ export function MailGatewaySection({ api }: MailGatewaySectionProps) {
           <button style={primary} disabled={busy !== null} onClick={() => void saveWhitelist()}>
             {busy === 'whitelist' ? '保存中…' : '保存白名单'}
           </button>
-          <span style={muted}>同一份白名单同时校验入站发件地址与出站回复地址。</span>
         </div>
+      </div>
+
+      <div>
+        <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>运行日志</h3>
+        <pre ref={logRef} style={logBox}>
+          {snapshot?.logs?.length ? snapshot.logs.join('\n') : '暂无日志'}
+        </pre>
       </div>
 
       {notice ? (

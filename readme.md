@@ -1,30 +1,30 @@
 # dsh-mail-sender
 
-DeepSeek Harness (DSH) 邮件通道插件：用户发邮件 → DSH 接收并交给 agent → agent 的回复自动用邮件发回去。
+DeepSeek Harness (DSH) 邮件通道插件：用户发邮件 → DSH 交给 agent → 回复自动用邮件发回。
 
-- **入站**：IMAP IDLE 实时监听收件箱
-- **会话**：同一发件人 → 同一个 agent 会话（`sessionId = mail-<地址>`）
-- **出站**：订阅 `session/event`，一轮 turn 正常结束后自动 SMTP 回信（`Re:` 主题 + `In-Reply-To`）
-- **白名单**：`allowedAddresses` 同时控制入站与出站
-- **配置界面**：Host 从导出的 `Config` schema 自动渲染，无需自写前端
+- **常驻入口**：被动接收邮件驱动会话，不是等待模型调用的 Tool
+- **标准协议**：IMAP IDLE 收信 / SMTP 回信，不绑定托管邮件服务
+- **双向白名单**：同一份精确地址列表同时校验入站发件人与出站回复对象
+- **每地址一个会话**：`sessionId = mail:<规范化地址>`，上下文连续
+- **设置页 UI**：邮箱绑定表格、可增删白名单、IDLE 状态卡与测试连接
 
 ## 工作原理
 
 ```
-来信 (IMAP)
-   │  mailparser 解析 from / subject / body / messageId
+来信 (IMAP IDLE / 60s 轮询)
+   │  认证后探测 capability，决定 IDLE 或轮询
    ▼
-白名单过滤 ── 不在 allowedAddresses → 丢弃
-   │
+AccessPolicy（纯函数）── 自动流量 / 非白名单 → 静默丢弃
+   │  toJob 一次解析发件地址并生成 MailJob
    ▼
-ctx.agents.create / resume (sessionId = `mail-${from}`)
-   │  agent.followup(createUserMessage(...))
+串行消费队列 → ctx.agents.get / resume / create
+   │  agent.followup(正文)
    ▼
-订阅 session/event
-   │  assistant/message → 累积 text 块
-   │  turn/end (reason.kind === 'completed') → 取出本轮文本
+session/event（durable）
+   │  assistant/message → 累积本轮 text
+   │  turn/end completed → 取出回复
    ▼
-SMTP 回复 (Re: 原主题, In-Reply-To: 原 Message-ID)
+SMTP 连接池回信（Re: + In-Reply-To + References）
 ```
 
 ## 安装
@@ -33,46 +33,47 @@ SMTP 回复 (Re: 原主题, In-Reply-To: 原 Message-ID)
 dsh plugin --profile web add dsh-mail-sender
 ```
 
-安装后重启 `dsh web`，用 `dsh --profile web --dump-config` 确认插件行已进入配置树。
+安装后重启 `dsh web`。
 
-## 在设置页填写配置
+## 设置页
 
-打开 **Settings（设置）→ Plugins（插件）→ dsh-mail-sender**，表单由 Host 根据插件导出的 `Config` schema 自动生成。
+打开 **Settings（设置）→ 邮件网关**：
 
-> 该表单依赖两点，本插件已满足：
-> 1. patch 行 `id` 与包名一致（`dsh-mail-sender`），设置表单按行 id 定位；
-> 2. 每个可编辑字段声明为 `.volatile()`，DSH 才会把它投影成可编辑项并把改动写回 profile 的 `cordis.patch.yml`。
-
-| 字段 | 说明 |
+| 区域 | 行为 |
 |---|---|
-| `email` | 机器人邮箱，如 `agent@qq.com`（同时用于 IMAP/SMTP 登录与回信 From） |
-| `password` | 邮箱密码或授权码 |
-| `imapHost` | IMAP 服务器，如 `imap.qq.com`（固定 993 + SSL） |
-| `smtpHost` | SMTP 服务器，如 `smtp.qq.com` |
-| `smtpPort` | 默认 `465`（SSL）；填 `587` 时自动走 STARTTLS |
-| `allowedAddresses` | 允许与 agent 通信的邮箱地址列表 |
+| 邮箱绑定 | IMAP / SMTP 主机、端口、TLS、用户名、显示名；密码保存后只显示“已设置”，留空表示不修改 |
+| 测试连接 | 用当前表单值临时建连并探测 IDLE，结果直接写入状态卡 |
+| 白名单 | 输入回车添加、行尾删除、独立保存；保存只更新内存策略，不断开 IMAP |
+| 状态卡 | 正在连接 / 支持 IDLE / 不支持 IDLE（轮询 60s，延迟最长约 1 分钟）/ 连接失败原因 |
 
-服务器地址按你的邮箱服务商填写，插件不做猜测。
+密码字段声明为 `role('secret')`，由 credential provider 保存，不落 `settings` 明文。
 
-白名单同时控制两个方向：非名单内发件人的来信直接丢弃；agent 的回复目标就是来信人，因此也天然限定在名单内。
+## 关键约束
 
-所有字段都是 `.volatile()`：保存后即时生效，IMAP 会按新配置自动重连，无需重启 host。
+- 不处理附件，只取 `text/plain`（缺失时用 HTML 降级）
+- 不设发送频率或发送量限制
+- 拦截 `Auto-Submitted`（非 `no`）与 `Precedence: bulk/junk/list`，防邮件环
+- UID 游标持久化；首次配置建立基线，不回放历史邮件
+- 断线重连退避：5s → 10s → 30s → 1min → 5min
+- SMTP 单例连接池（`pool: true`，`maxConnections: 3`）
 
 ## 包结构
 
 ```
-.
-├── package.json        # dsh.bundle 声明（无 dsh.client，纯 Host 插件）
-├── cordis.patch.yml    # 顶层 YAML 数组：插入插件行
-├── src/index.ts
-├── tsconfig.json
-└── .npmrc              # legacy-peer-deps=true（本地开发）
+src/
+├── index.ts      # name / inject / Config / apply
+├── config.ts     # schemastery（volatile + secret 密码）
+├── policy.ts     # AccessPolicy 纯函数、toJob 一次解析
+├── mailbox.ts    # 绑定信息规范化与连接键
+├── cursor.ts     # UID 游标持久化
+├── receiver.ts   # ImapReceiver：IDLE/轮询、能力探测、退避
+├── sender.ts     # SmtpSender：连接池回信
+├── deliver.ts    # ctx.agents 与 session/event 的唯一适配点
+├── gateway.ts    # 编排、串行队列、reload
+├── service.ts    # Typert Remote（get/save/test/status）
+├── remote.ts     # Remote 契约与类型声明
+├── typert.ts     # source-mode 发现占位
+└── client/       # settings.section UI
 ```
 
-`cordis.patch.yml` 必须是**顶层数组**的 loader patch 条目：
-
-```yaml
-- insert:
-    - id: dsh-mail-sender
-      name: dsh-mail-sender
-```
+客户端入口为 `./client`，由 esbuild 打包为单文件；宿主入口为 `./index.js`。

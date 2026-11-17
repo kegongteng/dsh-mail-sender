@@ -69,6 +69,9 @@ export class MailDeliverer {
     const id = sessionId as SessionId
     const live = this.ctx.agents.get(id)
     if (live) {
+      if (this.ctx.sessions.get(id) !== live.session) {
+        throw new Error(`会话 ${sessionId} 未进入全局 SessionStore`)
+      }
       const borrowed: DriveHandle = {
         agent: live,
         off: this.watch(live),
@@ -83,10 +86,21 @@ export class MailDeliverer {
     try {
       handle = await this.ctx.agents.resume({ resumeSessionId: id })
     } catch {
-      handle = await this.ctx.agents.create({ sessionId: id })
+      // 与 ACP 的外部会话创建路径一致：cwd 是持久会话的工作区元数据。
+      handle = await this.ctx.agents.create({
+        sessionId: id,
+        meta: { cwd: process.cwd() },
+      })
       created = true
     }
     this.onLog?.(`[mail] ${sessionId} 会话已${created ? '创建' : '恢复'}`)
+
+    // DeepSeek 请求扩展通过全局 SessionStore 上传 dsh_session_log。若这里不可见，
+    // 继续 followup 只会让服务端按 sessionId 加载一份不存在的历史。
+    if (this.ctx.sessions.get(id) !== handle.agent.session) {
+      await handle.dispose()
+      throw new Error(`会话 ${sessionId} 创建后未进入全局 SessionStore`)
+    }
 
     const owned: DriveHandle = {
       agent: handle.agent,

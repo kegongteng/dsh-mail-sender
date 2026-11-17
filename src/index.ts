@@ -6,7 +6,7 @@ import { MailGatewayService } from './service.js'
 export { Config } from './config.js'
 
 export const name = 'dsh-mail-sender'
-export const inject = ['agents', 'settings']
+export const inject = ['agents', 'sessions', 'settings']
 
 /**
  * 常驻入口：邮件驱动会话，而不是等待模型调用的 Tool。
